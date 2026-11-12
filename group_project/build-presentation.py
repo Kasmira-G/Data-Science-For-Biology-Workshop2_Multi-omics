@@ -342,9 +342,10 @@ h1 = add_picture(s, "02-contraceptive_effect_files/figure-html/gene-ord-com-1.pn
                  0.6, y_img, 7.1, 2.0,
                  caption="Ordination coloured two ways: community type (left "
                          "panel) separates more than method (right panel).")
-add_picture(s, "02-contraceptive_effect_files/figure-html/volcano-1.png",
+add_picture(s, "02-contraceptive_effect_files/figure-html/volcano-padj-1.png",
             8.15, y_img, 4.55, 1.4,
-            caption="Volcano plot, lacto-dominant vs diverse: 310 genes pass FDR.")
+            caption="Volcano plot, lacto-dominant vs diverse — y-axis = adjusted p "
+                    "(FDR). Dots above the line are exactly the 310 FDR genes.")
 
 y_box = y_img + h1 + 0.75
 add_box(s, 0.6, y_box, 12.1, 1.6, fill=TEAL_LIGHT, rounded=True)
@@ -360,7 +361,12 @@ add_bullets(s, 0.95, y_box + 0.15, 11.5, 1.35, [
 ])
 add_notes(s, "Spot-check: rerun sum(genes_by_community$padj < 0.05, "
              "na.rm = TRUE) — it should be 310. The labelled top-10 genes in "
-             "the volcano should all sit above the dashed FDR line.")
+             "the volcano should all sit above the dashed FDR line.\n\n"
+             "This volcano plots -log10(adjusted p): a dot above the line is "
+             "exactly a gene passing FDR 0.05. Heights bunch into steps "
+             "because the correction gives many genes the same adjusted "
+             "value. The raw-p version (fine detail, near-misses visible) is "
+             "in the analysis report.")
 
 # ------------------------------------------------- slide 8: choices
 s = add_slide()

@@ -139,7 +139,7 @@ Spot-check: `results(dds_arm, contrast = c("arm", "injectable", "pill"))`,
 
 ![Same gene ordination coloured two ways: community type (left) separates more than method (right).](02-contraceptive_effect_files/figure-html/gene-ord-com-1.png){width=640}
 
-![Volcano plot of the lacto-dominant vs diverse test: 310 genes pass FDR.](02-contraceptive_effect_files/figure-html/volcano-1.png){width=430}
+![Volcano plot of the lacto-dominant vs diverse test — y-axis = adjusted p (FDR); 310 genes above the line.](02-contraceptive_effect_files/figure-html/volcano-padj-1.png){width=430}
 
 | Community vs method, head-to-head on genes | Result |
 |---|---|

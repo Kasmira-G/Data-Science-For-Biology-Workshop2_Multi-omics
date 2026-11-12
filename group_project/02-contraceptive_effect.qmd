@@ -293,6 +293,34 @@ ggplot(vol, aes(log2FoldChange, neg_log_p, colour = direction)) +
   theme_minimal()
 ```
 
+The plot above uses **raw p-values** for the dot height, because raw p keeps
+fine detail: you can see the "near-miss" genes sitting just under the line.
+The version below is the same test with the **adjusted p-value (FDR)** on the
+y-axis instead. Two things to notice: the dashed line now separates the
+significant genes exactly (a gene passes FDR 0.05 if and only if its dot is
+above the line), and heights bunch up into **steps**, because the correction
+hands many genes the same adjusted value.
+
+```{r volcano-padj, fig.height=5}
+vol2 <- vol |>
+  mutate(neg_log_padj = -log10(pmax(padj, .Machine$double.xmin)))  # guard vs log(0)
+top10_padj <- vol2 |> filter(padj < 0.05) |> slice_min(padj, n = 10)
+
+ggplot(vol2, aes(log2FoldChange, neg_log_padj, colour = direction)) +
+  geom_point(size = 0.7, alpha = 0.6) +
+  ggrepel::geom_text_repel(data = top10_padj, aes(label = symbol),
+                           size = 2.8, colour = "black", max.overlaps = 20) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_colour_manual(values = c("steelblue", "grey75", "tomato")) +
+  labs(title = "Genes by community type — y-axis = adjusted p-value",
+       subtitle = "Same DESeq2 test; dots above the line are exactly the FDR < 0.05 genes",
+       x = "log2 fold change  → higher in lacto-dominant",
+       y = "-log10 adjusted p-value (FDR)",
+       colour = NULL) +
+  theme_minimal()
+```
+
 # Verdict
 
 | Question | Test | Answer |
@@ -348,6 +376,11 @@ points all sit above the dashed line: if any sit below it, I made an error.
 - Used `by = "margin"` (each term's effect given the others). *Alternative
   not chosen:* `by = "terms"`, where the first term listed absorbs more
   credit.
+- Volcano plots show **both** y-axes: raw p (fine detail, near-misses visible)
+  and adjusted p (dot above the line = exactly the FDR-passing genes).
+  Significance itself is judged by **FDR in both**. *Alternative not chosen:*
+  raw p only, which invites the misreading that the 310-gene list was
+  chosen on uncorrected p-values.
 - DESeq2 contrasts coded as **injectable vs pill, ring vs pill, ring vs
   injectable** with pill as reference. *Alternative not chosen:* an
   likelihood-ratio test of the 3-level factor as a whole, which would hide
