@@ -36,7 +36,7 @@ Answer before running anything below.
 
 **1. Of the 220 species, how many will you see in a single sample?**
 
-- *Your answer:*
+- *24*
 
 **2. Of the 14,226 genes, how many will you see in a single sample?**
 

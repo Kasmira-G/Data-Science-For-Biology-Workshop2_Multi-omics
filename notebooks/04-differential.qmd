@@ -47,7 +47,7 @@ count(metadata, time_point, community)
 
 **1. Testing 13,738 genes, how many get a raw p-value below 0.05 if nothing is truly different?**
 
-- *Your answer:*
+- *0.05 (5%) x 13 738 = 687*
 
 **2. Would you rather have 157 samples at one visit, or 471 across three visits? Why?**
 

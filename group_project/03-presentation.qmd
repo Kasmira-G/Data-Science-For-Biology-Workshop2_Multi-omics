@@ -1,0 +1,181 @@
+---
+title: "Do contraceptive methods change the vaginal environment?"
+subtitle: "Study B — 93 samples · pill / injectable / ring"
+format:
+  revealjs:
+    theme: default
+    slide-level: 2
+    width: 1280
+    height: 780
+    embed-resources: true
+    progress: true
+    incremental: false
+execute:
+  warning: false
+  message: false
+---
+
+## Background & question
+
+**The setting**
+
+- Hormonal contraception is used by millions of women, but its effect on the
+  vaginal environment is not well mapped.
+- The "vaginal environment" has three layers we can measure:
+  **who is there** (220 bacterial species), **what the tissue is doing**
+  (~14,000 human genes), and **immune signalling** (15 cytokines).
+
+**Our two questions**
+
+1. Do the three hormonal methods (pill, injectable, ring) produce different
+   vaginal microbiomes or transcriptomes?
+2. Does **community type** — *Lactobacillus*-dominant vs diverse — explain
+   gene activity better than the method does?
+
+::: notes
+One-sentence take-home to open with: *the methods barely differ; the
+community state is the stronger signal.* The rest of the deck earns that
+sentence.
+:::
+
+## Study design
+
+- **Cohort:** 93 women, one sample each, cross-sectional.
+- **Three arms:** pill, injectable, ring — all hormonal, but the ring acts
+  *locally* in the vagina while pill and injectable act *systemically*.
+- **Three data types per sample:** species counts (220 × 93), RNA-seq gene
+  counts (14,226 × 93), cytokines (15 per sample).
+- **Design is clean:** sequencing batches are balanced across arms
+  (47 vs 46 samples), and BV / STI prevalence is spread across arms —
+  nothing is confounded with the method.
+- **Key rule we follow:** community type is defined **from the species table
+  only**, then tested **on the gene table** — never define a group from one
+  table and test that same table.
+
+::: notes
+If asked why one sample per woman: this is a cross-sectional comparison
+between methods, not a before/after trial like the probiotic Study A.
+:::
+
+## Quality control — the gate before any test
+
+| Check | Result |
+|---|---|
+| Count-table columns match metadata rows, both tables | **PASS** |
+| No duplicate or unmatched sample IDs | **PASS** |
+| All 220 species + all 14,226 genes annotated | **PASS** |
+| Metadata complete; `bv` label matches Nugent score bands | **PASS** |
+| Sequencing depth: shallowest sample 5,247 reads | **PASS** — nothing near our 1,000-read line |
+| Batch vs arm cross-table: no confounding | **PASS** |
+| Cytokines: `B018`, `B029` missing **all 15** values | **FLAG** — dropped from cytokine analyses only |
+
+![Sequencing depth of every sample, both tables (log scale). All samples sit well past the 1,000-read line.](01-qc_files/figure-html/depth-plot-1.png){width=560}
+
+**Carry-forward: all 93 samples into microbiome & RNA-seq; 91 into cytokine
+analyses.** Full audit trail with spot-checks: `01-qc-report.html`.
+
+::: notes
+Why the depth plot matters: a shallow sample behaves oddly in every
+downstream method. The shallowest microbiome sample has 5,247 reads — verify
+with `min(colSums(d$species))` in `01-qc.qmd`.
+
+Why only "cytokine analyses only" for B018/B029: they are missing *all* 15
+values (failed assay / lost tube), but their count tables are fine, so
+dropping them everywhere would waste two good sequencing samples.
+:::
+
+## Methods — and why we chose them
+
+- **Community type:** fraction of reads from *Lactobacillus* ≥ 50% →
+  `lacto-dominant` (48 samples), else `diverse` (45). Both types occur in all
+  three arms, so the two groupings are not copies of each other.
+- **Overall differences:** ordination (PCoA) + **PERMANOVA**
+  (999 permutations, `by = "margin"`).
+  - Species: **Bray–Curtis** distance.
+  - Genes: **CLR transform + Euclidean** — raw gene counts would let a few
+    very highly expressed genes dominate Bray–Curtis.
+- **Per-gene differences:** **DESeq2 on raw counts** (never CPM or logged —
+  it normalises itself), design `~ rnaseq_batch + arm` (or `+ community`),
+  genes kept if ≥ 10 counts in ≥ 24 samples, **FDR 0.05** across ~14,000 tests.
+- **BV status included as a yardstick** — a known biological effect, so our
+  method effect has a sense of scale.
+
+::: notes
+Choices to defend if asked:
+
+- *Why batch in the design?* QC showed it is balanced across arms, so it
+  cannot fake a method effect — but only if it is in the model.
+- *Why define community on species only?* Testing a group on the table that
+  defined it is circular; it guarantees a "significant" result.
+- *Why FDR?* ~14,000 genes tested at once — 5% of raw p-values would be
+  false positives by chance alone (~700 genes!).
+:::
+
+## Results 1 — the methods barely differ
+
+![Species composition (Bray–Curtis PCoA). Points coloured by method overlap.](02-contraceptive_effect_files/figure-html/species-ord-1.png){width=480}
+
+![Gene activity (CLR + Euclidean PCoA), coloured by method.](02-contraceptive_effect_files/figure-html/gene-ord-arm-1.png){width=480}
+
+| Test | Result |
+|---|---|
+| Species PERMANOVA | method R² **~3%**, p ≈ 0.08 — vs **~22%** for BV (yardstick) |
+| Gene PERMANOVA | method R² **~2.7%**, not significant |
+| DESeq2 pairwise (13,713 genes) | injectable vs pill **10** FDR genes; ring vs pill and ring vs injectable ≈ **100–140** each |
+
+::: notes
+How to read this: the ordination plots show overlap, and the numbers agree —
+method never explains more than ~3% of variation. The one structure worth
+chasing is **ring vs the two systemic methods**; injectable and pill are
+nearly indistinguishable. And the yardstick matters: BV status explains ~22%
+of species composition, so a real biological effect in this data looks like
+22%, not 3%.
+
+Spot-check: `results(dds_arm, contrast = c("arm", "injectable", "pill"))`,
+`sum(padj < 0.05, na.rm = TRUE)` should be 10.
+:::
+
+## Results 2 — community type leaves a gene signature
+
+![Same gene ordination coloured two ways: community type (left) separates more than method (right).](02-contraceptive_effect_files/figure-html/gene-ord-com-1.png){width=640}
+
+![Volcano plot of the lacto-dominant vs diverse test: 310 genes pass FDR.](02-contraceptive_effect_files/figure-html/volcano-1.png){width=430}
+
+| Community vs method, head-to-head on genes | Result |
+|---|---|
+| Gene PERMANOVA (both terms in one model) | method **~2.6%** vs community **~1.5%** — both ns |
+| DESeq2 gene counts passing FDR | community **310** vs best method contrast **136** |
+
+::: notes
+The two lenses disagree, and that is the finding worth presenting:
+
+- The **ordination** (one pooled number) says neither grouping explains much.
+- The **gene-by-gene test** says community type finds > 2× more FDR-significant
+  genes than the best method contrast (310 vs 136).
+
+So community type is the stronger *target* if you want a gene list to
+interpret — the top genes are labelled in the volcano so you can eyeball
+whether they make biological sense. Spot-check: rerun
+`sum(genes_by_community$padj < 0.05, na.rm = TRUE)` — it should be **310**.
+:::
+
+## Choices we made
+
+- Community type defined from the **species table only**; tested on genes
+  only. *(Alternative not chosen: the circular test.)*
+- A simple **two-type split** at 50% *Lactobacillus*, rather than a
+  three-way *L. crispatus / L. iners / Gardnerella* split — we tried the
+  three-way version and it explained no more of the gene ordination (R² 2.4%
+  vs 1.5%) while being harder to explain.
+- **Bray–Curtis** for species, **CLR + Euclidean** for genes.
+  *(Alternative not chosen: Bray–Curtis on raw gene counts — dominated by
+  library size.)*
+- **Batch included** in every DESeq2 design; **no samples dropped** from the
+  count tables. *(Alternative not chosen: dropping B018/B029 everywhere.)*
+- BV status as a **yardstick**, and `by = "margin"` PERMANOVA so each term
+  gets credit only for what it adds.
+
+::: notes
+Every choice here is documented with its rejected alternative in the two
+reports: `01-qc-report.html` and `02-contraceptive-analysis.html`.
+:::

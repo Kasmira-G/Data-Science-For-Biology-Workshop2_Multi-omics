@@ -1,0 +1,412 @@
+---
+title: "Analysis report — Study B"
+subtitle: "Do contraceptive methods differ, and does community type explain more than the method?"
+format:
+  typst:
+    papersize: a4
+    margin:
+      x: 2cm
+      y: 2cm
+    fontsize: 10pt
+    keep-typ: true
+execute:
+  warning: false
+  message: false
+---
+
+# What is this document?
+
+Study B is the contraception cohort: 93 samples, three hormonal methods
+(`pill`, `injectable`, `ring`). The [quality control
+report](01-qc-report.pdf) passed every check, so all 93 samples go into the
+analyses here.
+
+This report answers two questions and shows the code behind every number, so
+anyone can rerun or audit them:
+
+- **Main question: do the three methods differ in their effect on the vaginal
+  environment?** We look at both tables — the 220 bacterial species and the
+  ~14,000 human genes. "Differ" can mean two things: do the samples *look*
+  different overall (an ordination + PERMANOVA question), and do specific
+  genes or species *measure* different (a DESeq2 question).
+- **Sub-question: does community type explain more of the gene activity than
+  the method does?** People in this cohort cluster into two vaginal community
+  types — those dominated by *Lactobacillus* and those with a more diverse
+  community. We define that type **from the species table only** (the workshop
+  rule: never define a group from one count table and then test that same
+  table), and then test it **on the gene table**, next to the method.
+
+Each section opens with an *"In plain words:"* paragraph, and the report ends
+with the list of choices made and rejected alternatives.
+
+```{r setup}
+library(tidyverse)
+library(here)
+library(DESeq2)
+library(microViz)
+library(phyloseq)
+
+source(here("R/count_tables.R"))
+d <- read_counts("group_b")
+```
+
+# Step 0: define community type from the species table
+
+**In plain words:** we compute, for every sample, the fraction of its reads
+that belong to the genus *Lactobacillus*, then split at 0.5. At least half
+Lactobacillus → `lacto-dominant`; anything else → `diverse`. This is the same
+recipe as notebook 02, and it uses **only the species table** — the gene table
+is not touched until Step 2, where this group is tested on it.
+
+```{r}
+lacto_taxa <- d$taxonomy$taxon[d$taxonomy$Genus == "Lactobacillus"]
+lacto_frac <- colSums(d$species[lacto_taxa, , drop = FALSE]) / colSums(d$species)
+
+meta <- d$metadata |>
+  mutate(
+    lacto_fraction = lacto_frac[sample_id],
+    community = cut(lacto_fraction, c(-0.01, 0.5, 1.01),
+                    labels = c("diverse", "lacto-dominant"))
+  )
+```
+
+```{r}
+# Do the community types spread across the three arms, or pile into one?
+table(meta$community, meta$arm)
+```
+
+The split is roughly even (45 `diverse`, 48 `lacto-dominant`) and both
+community types occur in all three arms, so community is not just a hidden
+copy of the method. Good enough to compare the two.
+
+# Question 1: do the three methods differ?
+
+## 1a. Do the species profiles differ by method?
+
+**In plain words:** an ordination plot is a 2-D map of "who is similar to
+whom": samples that plot close together have similar species compositions.
+Bray-Curtis is the distance measure used here — it compares which species are
+present and in what relative amounts. The PERMANOVA below then puts a number
+on what you see: it shuffles the method labels 999 times and asks how often a
+shuffled labelling would produce an effect this big (that frequency is the
+p-value), and R² says what fraction of the total variation the method
+explains.
+
+```{r species-ord, fig.height=4.5}
+ps_species <- as_counts(data = d, table = "microbiome")
+sd0 <- as(sample_data(ps_species), "data.frame")
+sd1 <- as.data.frame(meta[match(rownames(sd0), meta$sample_id), ])
+rownames(sd1) <- rownames(sd0)
+sample_data(ps_species) <- sample_data(sd1)
+
+ps_species |>
+  tax_transform("identity") |>
+  dist_calc("bray") |>
+  ord_calc("PCoA") |>
+  ord_plot(colour = "arm") +
+  labs(colour = "method")
+```
+
+```{r}
+# Species table: method effect, with BV status alongside as a yardstick.
+ps_species |>
+  tax_transform("identity") |>
+  dist_calc("bray") |>
+  dist_permanova(variables = c("bv", "arm"), by = "margin",
+                 seed = 2026, n_perms = 999)
+```
+
+The three methods do not separate on the plot. The method R² is **~3%** of the
+variation in species composition and sits just above the conventional
+significance line — compare that with BV status, which explains **~22%** and
+is highly significant. Whatever the methods do to the microbiome, it is small
+next to the BV effect. BV status is included deliberately as a *yardstick*: a
+known biological effect, so the method effect has a sense of scale.
+
+## 1b. Do the gene profiles differ by method?
+
+**In plain words:** same idea on the gene table, but the distances are
+computed differently. Gene counts are first **CLR-transformed** — the log of
+each gene's abundance relative to the average gene in that sample — and then
+compared with plain Euclidean distance. This is needed because gene counts
+behave badly under Bray-Curtis: a few very long or very highly expressed genes
+would dominate everything.
+
+```{r gene-ord-arm, fig.height=4.5}
+ps_genes <- as_counts(data = d, table = "rnaseq", min_count = 10, min_samples = 24)
+sd0 <- as(sample_data(ps_genes), "data.frame")
+sd1 <- as.data.frame(meta[match(rownames(sd0), meta$sample_id), ])
+rownames(sd1) <- rownames(sd0)
+sample_data(ps_genes) <- sample_data(sd1)
+
+ps_genes_arm <- ps_genes |>
+  tax_transform("clr", rank = "symbol") |>
+  dist_calc("euclidean") |>
+  ord_calc("PCoA")
+
+ps_genes_arm |>
+  ord_plot(colour = "arm") +
+  labs(colour = "method")
+```
+
+```{r}
+ps_genes_arm |>
+  dist_permanova(variables = c("arm"), by = "margin", seed = 2026, n_perms = 999)
+```
+
+Again no visible separation: method explains **~2.7%** of the variation in
+gene activity, not statistically significant at 999 permutations.
+
+## 1c. Which genes differ between which methods?
+
+**In plain words:** PERMANOVA pools all three arms into one overall
+yes/no answer. DESeq2 lets us ask the three pairwise questions directly —
+injectable vs pill, ring vs pill, ring vs injectable — and produces a
+per-gene test with a false-discovery-rate correction (FDR, a p-value adjusted
+for the fact that we tested ~14,000 genes at once). DESeq2 runs on **raw
+counts** (never CPM, never logged — it normalises itself). We add
+`rnaseq_batch` to the design so the sequencing batch cannot inflate the method
+effect, and keep genes with ≥10 raw counts in at least a quarter of the
+samples so that genes which are almost always zero cannot soak up statistical
+power.
+
+```{r deseq-arm}
+# The one safety check that matters: columns must line up with rows.
+counts <- d$genes[, meta$sample_id]
+stopifnot(identical(colnames(counts), meta$sample_id))
+
+keep <- rowSums(counts >= 10) >= ceiling(nrow(meta) / 4)
+counts_kept <- counts[keep, ]
+cat("Genes tested:", nrow(counts_kept), "of", nrow(counts), "\n")
+
+dds_arm <- DESeqDataSetFromMatrix(countData = counts_kept, colData = meta,
+                                  design = ~ rnaseq_batch + arm)
+dds_arm <- DESeq(dds_arm, quiet = TRUE)
+```
+
+```{r}
+arm_contrasts <- tribble(
+  ~contrast, ~args,
+  "injectable vs pill",     c("arm", "injectable", "pill"),
+  "ring vs pill",           c("arm", "ring", "pill"),
+  "ring vs injectable",     c("arm", "ring", "injectable")
+)
+
+genes_by_arm <- arm_contrasts |>
+  mutate(res = map(args, ~ as.data.frame(results(dds_arm, contrast = .x)) |>
+                     rownames_to_column("feature")),
+         tested = map_int(res, nrow),
+         p_lt_0.05 = map_int(res, ~ sum(.x$pvalue < 0.05, na.rm = TRUE)),
+         padj_lt_0.05 = map_int(res, ~ sum(.x$padj < 0.05, na.rm = TRUE))) |>
+  select(-args, -res)
+genes_by_arm
+```
+
+```{r}
+# Save the ring vs pill table with annotations for tomorrow's enrichment step.
+genes_by_pill_ring <- results(dds_arm, contrast = c("arm", "ring", "pill")) |>
+  as.data.frame() |> rownames_to_column("feature") |>
+  left_join(d$gene_info, by = c("feature" = "ensembl_gene_id")) |>
+  select(feature, symbol, gene_name, baseMean, log2FoldChange, lfcSE,
+         stat, pvalue, padj)
+
+write_csv(genes_by_pill_ring, here("data", "genes_ring_vs_pill_studyB.csv"))
+cat("Saved", here("data", "genes_ring_vs_pill_studyB.csv"),
+    "with", nrow(genes_by_pill_ring), "genes\n")
+```
+
+Out of 13,713 genes tested, only 10 pass FDR for injectable vs pill, while
+~100 pass for the contrasts that involve the ring. **If the methods differ
+from each other at all, it is mostly the ring** — a local hormone delivery
+that sits in the vagina — versus the two systemic methods.
+
+# Question 2: does community type explain more than the method does?
+
+## 2a. Both groupings on the same gene ordination
+
+**In plain words:** the same gene map as above, coloured twice — once by
+community type, once by method. If community type were the real driver, the
+colours should separate in the first panel and mix in the second.
+
+```{r}
+# Attach the community column to the gene phyloseq object.
+sd0 <- as(sample_data(ps_genes), "data.frame")
+sd1 <- as.data.frame(meta[match(rownames(sd0), meta$sample_id), ])
+rownames(sd1) <- rownames(sd0)
+sample_data(ps_genes) <- sample_data(sd1)
+
+ps_genes_com <- ps_genes |>
+  tax_transform("clr", rank = "symbol") |>
+  dist_calc("euclidean") |>
+  ord_calc("PCoA")
+```
+
+```{r gene-ord-com, fig.height=3, fig.width=6.5}
+gridExtra::grid.arrange(
+  ps_genes_com |> ord_plot(colour = "community") + labs(colour = "community type") + ggtitle("Grouped by community type"),
+  ps_genes_com |> ord_plot(colour = "arm")        + labs(colour = "method")        + ggtitle("Grouped by method"),
+  nrow = 1
+)
+```
+
+## 2b. The head-to-head PERMANOVA
+
+**In plain words:** the two groupings compete in a single model, so each gets
+credit only for what it explains *beyond* the other (`by = "margin"`).
+Degrees of freedom differ — method has 3 levels (2 df), community 2 levels
+(1 df) — which flatters the method's raw R² a little; keep that in mind when
+reading the numbers.
+
+```{r}
+ps_genes_com |>
+  dist_permanova(variables = c("bv", "community", "arm"), by = "margin",
+                 seed = 2026, n_perms = 999)
+```
+
+On the gene ordination, method explains **~2.6%** and community type
+**~1.5%**, both nonsignificant, and BV status explains least of all
+(~1.8%). Even allowing for the degrees-of-freedom difference, **the
+ordination says neither grouping explains much, and method does not lose to
+community**.
+
+## 2c. The head-to-head DESeq2
+
+**In plain words:** ordinations pool everything into one number. The
+gene-by-gene test counts how many *individual genes* actually pass FDR under
+each grouping — a second, sharper lens on the same comparison.
+
+```{r deseq-com}
+dds_com <- DESeqDataSetFromMatrix(countData = counts_kept, colData = meta,
+                                  design = ~ rnaseq_batch + community)
+dds_com <- DESeq(dds_com, quiet = TRUE)
+
+genes_by_community <- results(dds_com, contrast = c("community", "lacto-dominant", "diverse")) |>
+  as.data.frame() |> rownames_to_column("feature") |>
+  left_join(d$gene_info, by = c("feature" = "ensembl_gene_id")) |>
+  select(feature, symbol, gene_name, baseMean, log2FoldChange, lfcSE,
+         stat, pvalue, padj)
+
+bind_rows(genes_by_arm, tibble(contrast = "lacto-dominant vs diverse")) |>
+  mutate(
+    p_lt_0.05 = c(genes_by_arm$p_lt_0.05, sum(genes_by_community$pvalue < 0.05, na.rm = TRUE)),
+    padj_lt_0.05 = c(genes_by_arm$padj_lt_0.05, sum(genes_by_community$padj < 0.05, na.rm = TRUE)),
+    tested = c(genes_by_arm$tested, nrow(genes_by_community))
+  ) |>
+  select(contrast, tested, p_lt_0.05, padj_lt_0.05)
+```
+
+```{r}
+write_csv(genes_by_community, here("data", "genes_by_community_studyB.csv"))
+cat("Saved", here("data", "genes_by_community_studyB.csv"), "\n")
+```
+
+By this measure **community type wins clearly**: 310 genes pass FDR for
+lacto-dominant vs diverse, versus 10–136 for any pairwise method contrast.
+
+## 2d. What are those community genes doing?
+
+**In plain words:** a volcano plot. Every dot is one gene: left–right
+position says *which way* it shifts (positive = higher in lacto-dominant),
+height says *how strong the evidence is* (higher = smaller p-value). Dots
+above the dashed line pass the significance cut. The ten strongest genes are
+labelled by their gene symbol so a biologist can eyeball whether they make
+sense.
+
+```{r volcano, fig.height=5}
+vol <- genes_by_community |>
+  mutate(
+    direction = case_when(
+      is.na(padj) | padj >= 0.05 ~ "not significant",
+      log2FoldChange > 0 ~ "higher in lacto-dominant",
+      log2FoldChange < 0 ~ "higher in diverse"
+    ),
+    neg_log_p = -log10(pvalue)
+  )
+
+top10 <- vol |> filter(padj < 0.05) |> slice_min(padj, n = 10)
+
+ggplot(vol, aes(log2FoldChange, neg_log_p, colour = direction)) +
+  geom_point(size = 0.7, alpha = 0.6) +
+  ggrepel::geom_text_repel(data = top10, aes(label = symbol),
+                           size = 2.8, colour = "black", max.overlaps = 20) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_colour_manual(values = c("steelblue", "grey75", "tomato")) +
+  labs(title = "Genes by community type (defined from the species table)",
+       subtitle = "310 genes pass FDR 0.05; top 10 by adjusted p-value labelled",
+       x = "log2 fold change  → higher in lacto-dominant",
+       y = "-log10 raw p-value",
+       colour = NULL) +
+  theme_minimal()
+```
+
+# Verdict
+
+| Question | Test | Answer |
+|---|---|---|
+| Do the methods differ? | Species PERMANOVA | R² ~3%, borderline (p ≈ 0.08) — a weak signal at best |
+| Do the methods differ? | Gene PERMANOVA | R² ~2.7%, not significant |
+| Do the methods differ? | DESeq2 pairwise | Mostly ring vs the other two (~100 FDR genes); injectable vs pill ≈ nothing |
+| Community vs method on genes? | Gene PERMANOVA | method ~2.6% > community ~1.5%; neither significant |
+| Community vs method on genes? | DESeq2 FDR gene counts | community 310 > any method contrast |
+
+**Main question:** the three hormonal methods do not produce clearly
+different vaginal transcriptomes or microbiomes in this cohort. The only
+structure worth chasing is **ring vs the systemic methods** (~100 genes each
+way), while injectable and pill are nearly indistinguishable. Even that
+signal is small: method never explains more than ~3% of the overall
+variation, and BV status dwarfs it on the species table (~22%).
+
+**Sub-question:** the two lenses disagree, and that is the interesting
+result. On the ordination (one pooled number), method slightly out-explains
+community type, though both are weak and neither is significant. On the
+gene-by-gene test, community type finds more than twice as many FDR-significant
+genes as the best method contrast (310 vs 136). So community type is the
+stronger *target* if you want a gene list to interpret, but the pooled
+variation it explains is still small — and remember the community type was
+defined from the *species* table, which is why we tested it only on genes.
+
+**Spot-check:** rerun `sum(genes_by_community$padj < 0.05, na.rm = TRUE)` —
+it should be 310. Then open the volcano and check that the labelled top-10
+points all sit above the dashed line: if any sit below it, I made an error.
+
+# How to check this yourself
+
+Open `02-contraceptive_effect.qmd` in the `group_project/` folder — it is the
+working version of this report with the same code. The most useful single
+check is `sum(genes_by_community$padj < 0.05, na.rm = TRUE)` = **310**; if it
+matches, the whole DESeq2 pipeline ran as shown. The two exported gene tables
+(`genes_ring_vs_pill_studyB.csv`, `genes_by_community_studyB.csv`) are in
+`data/` and open in any spreadsheet program.
+
+# Choices made
+
+- Defined community type **from the species table only** (Lactobacillus
+  fraction split at 0.5) and tested it on genes. *Alternative not chosen:* a
+  three-way type (L. crispatus / L. iners / Gardnerella) — I checked it and
+  it explained no more of the gene ordination (R² 2.4% vs 1.5%) while being
+  harder to explain.
+- Tested community type on **genes only**, never on the species table it was
+  defined from. *Alternative not chosen:* the circular test.
+- Used **Bray-Curtis** for species and **CLR + Euclidean** for genes.
+  *Alternative not chosen:* Bray-Curtis on raw gene counts, which is
+  dominated by library size.
+- Included `rnaseq_batch` in both DESeq2 designs (the QC report showed it is
+  balanced across arms). *Alternative not chosen:* a design without it, which
+  risks inflating group differences with batch differences.
+- Kept genes with **≥10 raw counts in ≥24 samples** (a quarter of 93) for both
+  the ordination (13,760 symbols) and DESeq2 (13,713 genes).
+  *Alternative not chosen:* no filter, which wastes permutations on genes
+  that are almost always zero.
+- Entered BV status in the PERMANOVAs as a **yardstick** to size the method
+  effect against a known biological effect. *Alternative not chosen:* leave
+  it out and have no sense of scale.
+- Used `by = "margin"` (each term's effect given the others). *Alternative
+  not chosen:* `by = "terms"`, where the first term listed absorbs more
+  credit.
+- DESeq2 contrasts coded as **injectable vs pill, ring vs pill, ring vs
+  injectable** with pill as reference. *Alternative not chosen:* a
+  likelihood-ratio test of the 3-level factor as a whole, which would hide
+  which pair drives the difference.
+- No samples were dropped. *Alternative not chosen:* excluding B018/B029 —
+  their missing cytokines do not affect the count tables used here.
