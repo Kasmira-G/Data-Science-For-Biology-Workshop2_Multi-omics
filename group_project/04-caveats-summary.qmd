@@ -1,0 +1,38 @@
+---
+title: "What we should NOT believe — critical read-out"
+subtitle: "Study B caveats · re-checked 12 Nov"
+format:
+  pptx:
+    slide-level: 2
+execute:
+  warning: false
+  message: false
+---
+
+## What not to believe — and why
+
+**1. The "310 community genes" (sub-question) — don't believe it**
+
+- Community type and BV status are nearly the same variable (46/48 lacto-dominant are BV-negative; 37/45 diverse are BV-positive)
+- Re-ran DESeq2 with BV in the model: **310 FDR genes → 0**
+- The gene list is a *dysbiosis* signal, not evidence that "community beats method"
+
+**2. The "ring" genes — mostly not about the ring**
+
+- STI status is imbalanced across arms (ring 65% vs pill 43%) and was never adjusted for
+- Ring vs pill: 97 FDR genes → 88 (+BV) → **35 (+BV +STI)**
+- Also cross-sectional: these are *associations*, not "effects"
+
+**3. The ordination verdicts — treat with care**
+
+- Non-significant ≠ no difference (~31 women/arm, underpowered)
+- PERMANOVA can't separate group location from group spread (BV ~22% partly = diverse group being more variable)
+- Gene PERMANOVA skipped the batch adjustment that DESeq2 used — the two "lenses" were never on equal footing
+
+**What survives:** BV has a big effect on species composition (~22%); method effects are small — believable as *small*, not as *zero*.
+
+::: notes
+Every number above was re-run on the same 93 samples with the same
+filtering; only the DESeq2 designs changed. Details and full code in
+04-caveats-detail.docx.
+:::

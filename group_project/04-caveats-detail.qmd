@@ -1,0 +1,219 @@
+---
+title: "What we should NOT believe about our results — and why"
+subtitle: "A critical re-check of the Study B analysis (02-contraceptive-analysis / 02-contraceptive_effect)"
+format: docx
+execute:
+  warning: false
+  message: false
+---
+
+# Why this document exists
+
+Our main analysis (`group_project/02-contraceptive_effect.qmd`) reports a
+series of numbers and a verdict table. The **numbers** are reproducible —
+this document re-ran most of them and they check out. The **interpretations**
+we put on them, however, have several weaknesses. This document goes through
+each headline claim, explains why it should not be taken at face value, and
+gives the extra test we ran to expose the problem.
+
+Plain-language rule used throughout: a **confounder** is a third variable
+that is linked to both our grouping and our outcome, making the grouping look
+like the cause when it is only a passenger. **Collinear** variables are two
+measurements that are so strongly related that the model cannot tell which
+one deserves the credit.
+
+All re-runs below used the same 93 samples, the same gene filter
+(≥10 raw counts in ≥24 samples, 13,713 genes tested) and the same workshop
+helper `read_counts("group_b")`. Only the statistical designs changed.
+
+# Claim 1 — "Community type wins clearly: 310 FDR genes vs 10–136 for any method contrast"
+
+**Verdict: do not believe this.** It is the weakest headline in the analysis.
+
+## Why
+
+**Community type and BV status are nearly the same variable.** We defined
+community type as the fraction of reads belonging to *Lactobacillus*, split at
+0.5. Cross-tabulating against the `bv` label:
+
+|                | BV negative | BV intermediate | BV positive |
+|----------------|------------:|----------------:|------------:|
+| lacto-dominant | 45          | 1               | 2           |
+| diverse        | 6           | 2               | 37          |
+
+46 of 48 `lacto-dominant` samples are BV-negative; 37 of 45 `diverse` samples
+are BV-positive. This is expected biologically: bacterial vaginosis is
+essentially *defined* by the loss of *Lactobacillus* dominance. So our
+"community type" is a sharper, data-driven re-measurement of the `bv` label,
+not an independent variable.
+
+**The 310 genes collapse when BV is accounted for.** We re-ran the DESeq2
+gene test with three designs:
+
+| Design                            | FDR < 0.05 genes | raw p < 0.05 genes |
+|-----------------------------------|-----------------:|-------------------:|
+| `~ rnaseq_batch + community` (the report's design) | 310 | 2,204 |
+| `~ rnaseq_batch + bv` (BV instead of community)     | 17  | 514   |
+| `~ rnaseq_batch + bv + community` (both)            | **0** | 1,177 |
+
+When both variables go into the model, the community signal disappears
+entirely. That is the signature of **collinearity**: the two variables are
+fighting over the same 93 samples, and neither wins alone. The honest reading
+is that the 310 genes are a **dysbiosis signal** — something we already knew
+was large — and the head-to-head "community type vs method" was really
+"dysbiosis vs method", which was never a fair fight.
+
+**Counting FDR genes is not a proper effect size.** Three further problems:
+
+1. The method side got *three* pairwise contrasts, each with its own
+   multiple-testing correction; the community side got one. The report never
+   computed the union of the three method contrasts ("any method contrast" —
+   it could exceed 136).
+2. The 0.05 FDR threshold is arbitrary; a different threshold re-ranks the
+   contenders.
+3. Different designs (with/without `bv`) were never equalised, so the counts
+   are not comparable in the first place.
+
+# Claim 2 — "If the methods differ at all, it is mostly the ring"
+
+**Verdict: partially believable, but two-thirds of the signal may not be
+about the ring at all.**
+
+## Why
+
+**STI status is imbalanced across arms and was never adjusted for.** The QC
+report called BV/STI prevalence "comparable across arms" by eyeballing a
+small cross-table, but the actual rates are:
+
+| Arm        | STI positive |
+|------------|-------------:|
+| ring       | 65% (17/26)  |
+| pill       | 43% (12/28)  |
+| injectable | 49% (19/39)  |
+
+A 22-percentage-point STI imbalance is large for n = 93, and STIs drive strong
+transcriptomic inflammation signals. Re-running ring vs pill with covariates:
+
+| Design                                          | FDR < 0.05 genes |
+|-------------------------------------------------|-----------------:|
+| `~ rnaseq_batch + arm` (the report's design)    | 97 |
+| `~ rnaseq_batch + bv + arm`                     | 88 |
+| `~ rnaseq_batch + bv + any_sti + arm`           | **35** |
+
+Adding STI removes roughly two-thirds of the ring genes. BV barely changes
+them (88), so the ring signal that survives is real *as an association*, but
+what it reflects — the device itself, or the inflammation that travels with
+ring use — cannot be separated in this data.
+
+**No "effect" was measured, only an association.** Study B has one sample per
+woman (every `sample_id` equals its `participant_id`), with no pre-treatment
+baseline. The women in each arm were not randomised — they (or their
+clinicians) *chose* the method, and choices correlate with everything from
+sexual behaviour to clinic site. The report's language ("do the methods
+differ in their **effect**") quietly overclaims causality. The correct claim
+is: "women using different methods currently look similar, except ring users
+differ in ways partly explained by STI status."
+
+# Claim 3 — "QC passed every check"
+
+**Verdict: the checks passed, but the checks were limited.**
+
+The QC report is genuinely careful — column-order checks, Nugent-vs-`bv`
+consistency, depth, batch balance. But it can only check what someone thought
+to check. Its weakest line is "BV/STI prevalence is comparable across arms":
+the same cross-table it printed shows the 65% vs 43% STI imbalance that later
+undermines the ring result. There were also no checks for sample swaps,
+contamination, or whether the "human" gene table is contaminated with
+bacterial reads. "All PASS" means "the checks we ran passed" — not "the data
+are clean".
+
+# Claim 4 — The ordination verdicts (PERMANOVA)
+
+**Verdict: treat with care in both directions.**
+
+**Non-significant ≠ no difference.** With ~31 women per arm, an R² of ~3% and
+p ≈ 0.08 is exactly what an underpowered test of a small real effect looks
+like. The report's wording ("do not produce clearly different transcriptomes")
+is defensible, but listeners will hear "the methods are equivalent", which
+was never tested — showing equivalence needs an equivalence test, which we
+did not run.
+
+**PERMANOVA cannot separate location from spread.** A significant PERMANOVA
+can mean "group centres differ" or "one group is more scattered". The BV
+result (~22% of species-table variation) is partly the *diverse* group being
+more variable — biologically expected, since dysbiosis is unstable. So
+comparing "BV 22% vs method 3%" as if they were the same kind of quantity
+overstates the contrast. No dispersion test (e.g. `betadisper`) was run.
+
+**The two ordinations were not on equal footing.** DESeq2 adjusted for
+`rnaseq_batch`; the gene PERMANOVA did not. Unmodelled batch can shift both
+R² and p-values, so the "method ~2.6% > community ~1.5%, neither significant"
+numbers are not directly comparable to the DESeq2 side — and the report's
+"the two lenses disagree" framing is an artifact of comparing tests set up
+differently, not a paradox worth interpreting.
+
+**R² values across different tables don't compare.** BV ~22% on the species
+table and ~1.8% on the gene table do not mean BV "matters more for species" —
+different tables, different variance structure, different distance metrics.
+
+# Smaller things not to lean on
+
+- **The 0.5 cutoff is arbitrary.** 7 of 93 samples have a *Lactobacillus*
+  fraction between 0.35 and 0.65; flipping a few of them changes the 45/48
+  split. The binary also lumps *L. crispatus* and *L. iners* into one
+  "healthy" group.
+- **Fold changes are relative.** "Higher in lacto-dominant" means a larger
+  *share of the library*, not more molecules. The report applies this
+  compositional caveat to the species table but drops it when interpreting
+  the 310-gene list.
+- **The "community is not a hidden copy of the method" check** was a plain
+  cross-tab; the margin-type PERMANOVA handles this partly, but the check is
+  informal.
+
+# What we WOULD still believe
+
+1. **BV has a large effect on species composition (~22%).** Robust, matches
+   the literature, and is visible on the ordination by eye.
+2. **Method differences are small.** Believable as *small* — not as *zero*.
+3. **The ring direction is worth chasing** — but only with STI/BV status in
+   the design, and ideally a longitudinal design with a baseline.
+
+# How to verify every number in this document
+
+All re-runs use the standard setup:
+
+```r
+source(here::here("R/count_tables.R"))
+d <- read_counts("group_b")
+m <- d$metadata
+```
+
+- **STI imbalance:** `prop.table(table(m$arm, m$any_sti), 1)` → ring 0.65,
+  pill 0.43.
+- **Community ≈ BV:** `table(m$bv)` against the lacto-fraction split; expect
+  45/1/2 and 6/2/37.
+- **The 310 → 0 collapse:** run DESeq2 with `design = ~ rnaseq_batch +
+  community` (expect 310 FDR genes), then `design = ~ rnaseq_batch + bv +
+  community` (expect 0). Compare with the report's own
+  `sum(genes_by_community$padj < 0.05, na.rm = TRUE)` = 310.
+- **The ring shrinkage:** ring vs pill contrast under `~ rnaseq_batch + arm`
+  (97) then `~ rnaseq_batch + bv + any_sti + arm` (35).
+- **Borderline samples:** with the lacto fraction in hand,
+  `sum(lf > 0.35 & lf < 0.65)` → 7 of 93.
+
+# Choices made
+
+- Re-ran existing DESeq2 models with **added covariates** (`bv`, `any_sti`)
+  rather than new methods, so the comparison isolates exactly one change at a
+  time. *Alternative not chosen:* a matched or propensity-based re-analysis,
+  which needs larger n to work.
+- Reported **FDR counts alongside raw-p counts**, since the collapse
+  310 → 0 could otherwise be misread as a threshold artifact. *Alternative
+  not chosen:* reporting FDR counts only.
+- Kept the report's own filtering and sample set, changing **only the design
+  formula**, so any difference is attributable to the covariate. *Alternative
+  not chosen:* also varying the filter.
+- Did **not** re-test community type on the species table. *Alternative not
+  chosen:* the circular test the workshop explicitly forbids.
+- Framed the conclusion as "association, not effect". *Alternative not
+  chosen:* keeping the causal language of the original report.
